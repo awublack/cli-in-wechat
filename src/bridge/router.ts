@@ -278,8 +278,8 @@ export class Router {
         if (!v) { await reply('/mode <auto|safe|plan>\nauto=最高权限 safe=需确认 plan=只读'); return true; }
         this.sessions.update(uid, { mode: v as any });
         const desc: Record<string, string> = {
-          auto: 'AUTO\nClaude: --dangerously-skip-permissions\nCodex: --yolo\nGemini: --approval-mode yolo\nKimi: --print (自带yolo)\nHermes: --yolo',
-          safe: 'SAFE\nClaude: 默认权限\nCodex: --full-auto\nGemini: --approval-mode default\nKimi: 默认\nHermes: 默认',
+          auto: 'AUTO\nClaude: --dangerously-skip-permissions\nCodex: --yolo\nGemini: --approval-mode yolo\nHermes: --yolo\nKimi: --print (自带yolo)',
+          safe: 'SAFE\nClaude: 默认权限\nCodex: --full-auto\nGemini: --approval-mode default\nHermes: 默认\nKimi: 默认',
           plan: 'PLAN\nClaude: --permission-mode plan\nCodex: --sandbox read-only\nGemini: --approval-mode plan\nKimi: /plan',
         };
         await reply(desc[v]);

@@ -48,7 +48,7 @@ brew install opencode-ai/tap/opencode       # OpenCode
 ### 运行
 
 ```bash
-git clone https://github.com/sgaofen/cli-in-wechat.git
+git clone https://github.com/liangminmx/cli-in-wechat.git
 cd cli-in-wechat
 npm install
 npm run dev           # 开发模式
