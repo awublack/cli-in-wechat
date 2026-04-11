@@ -1,21 +1,45 @@
 import { log } from '../utils/logger.js';
 import type { CLIAdapter, ExecOptions, ExecResult, AdapterCapabilities } from './base.js';
 import { commandExists, spawnProc, setupAbort, setupTimeout, stripAnsi } from './base.js';
+import { randomUUID } from 'node:crypto';
 
-function cleanOpenClawOutput(text: string): string {
+function extractOpenClawContent(text: string): string {
   const lines = text.split('\n');
-  const filtered = lines.filter(line => {
-    const l = line.trim();
-    if (!l) return false;
-    if (l.startsWith('[plugins]')) return false;
-    if (l.startsWith('[mnemo]')) return false;
-    if (l.startsWith('Config warnings:')) return false;
-    if (l.startsWith('- plugins.')) return false;
-    if (l.startsWith('Registered')) return false;
-    if (l.startsWith('Server mode')) return false;
-    return true;
-  });
-  return filtered.join('\n').trim();
+  const contentLines: string[] = [];
+  let inContent = false;
+
+  for (const line of lines) {
+    const stripped = stripAnsi(line);
+    const l = stripped.trim();
+
+    // Skip plugin/logs
+    if (l.startsWith('[plugins]')) continue;
+    if (l.startsWith('[mnemo]')) continue;
+    if (l.startsWith('[agent/')) continue;
+    if (l.startsWith('[tools]')) continue;
+    if (l.startsWith('[diagnostic]')) continue;
+    if (l.startsWith('[compaction-')) continue;
+    if (l.startsWith('Config warnings:')) continue;
+    if (l.startsWith('- plugins.')) continue;
+    if (l.startsWith('Registered')) continue;
+    if (l.startsWith('Server mode')) continue;
+    if (l.startsWith('low context window')) continue;
+    if (l.startsWith('tools.profile')) continue;
+    if (l.startsWith('Auto-provisioned')) continue;
+    if (l.startsWith('Claim your')) continue;
+    if (l.startsWith('Compaction safeguard')) continue;
+    if (l.startsWith('Compaction detected')) continue;
+    if (l.startsWith('Ingest accepted')) continue;
+    if (l.includes('FailoverError')) continue;
+    if (l.includes('session file locked')) continue;
+    if (!l) continue;
+
+    // This looks like content
+    inContent = true;
+    contentLines.push(stripped);
+  }
+
+  return contentLines.join('\n').trim();
 }
 
 export class OpenClawAdapter implements CLIAdapter {
@@ -50,7 +74,8 @@ export class OpenClawAdapter implements CLIAdapter {
       if (sessionId) {
         args.push('--session-id', sessionId);
       } else {
-        args.push('--agent', 'main');
+        // Generate unique session to avoid lock conflicts
+        args.push('--session-id', `wx-${randomUUID().slice(0, 8)}`);
       }
 
       if (opts.extraArgs) args.push(...opts.extraArgs);
@@ -81,21 +106,30 @@ export class OpenClawAdapter implements CLIAdapter {
         const stdoutText = stripAnsi(stdout.trim());
         const stderrText = stripAnsi(stderr.trim());
 
-        try {
-          const r = JSON.parse(stdoutText);
-          const content = r.result || r.response || r.message || r.content;
-          resolve({
-            text: typeof content === 'string' ? content : cleanOpenClawOutput(stdoutText || stderrText),
-            error: !!r.error || code !== 0,
-            sessionId: r.sessionId || r.session_id,
-          });
-          return;
-        } catch { /* not JSON */ }
+        // Try JSON first
+        const jsonLines = stdoutText.split('\n').filter(l => l.trim().startsWith('{'));
+        for (const line of jsonLines) {
+          try {
+            const r = JSON.parse(line);
+            if (r.text || r.result || r.response || r.message || r.content) {
+              const content = r.text || r.result || r.response || r.message || r.content;
+              resolve({
+                text: typeof content === 'string' ? content : JSON.stringify(content),
+                error: !!r.error || code !== 0,
+                sessionId: r.sessionId || r.session_id,
+              });
+              return;
+            }
+          } catch { continue; }
+        }
 
-        const cleanText = cleanOpenClawOutput(stdoutText || stderrText);
-        const sessionMatch = cleanText.match(/session[:\s]+([a-f0-9-]{8,})/i);
+        // Extract content from logs
+        const content = extractOpenClawContent(stdoutText || stderrText);
+        const sessionMatch = stdoutText.match(/sessionID[":\s]+([a-f0-9-]{8,})/i) ||
+                             stdoutText.match(/session[-_]?id[":\s]+([a-f0-9-]{8,})/i);
+
         resolve({
-          text: cleanText || `完成`,
+          text: content || `完成`,
           error: code !== 0,
           sessionId: sessionMatch ? sessionMatch[1] : undefined,
         });
