@@ -33,6 +33,8 @@ export class OpenClawAdapter implements CLIAdapter {
       const sessionId = settings.sessionIds[this.name];
       if (sessionId) {
         args.push('--session-id', sessionId);
+      } else {
+        args.push('--agent', 'main');
       }
 
       if (opts.extraArgs) args.push(...opts.extraArgs);
