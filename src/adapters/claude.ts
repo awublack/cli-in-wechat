@@ -7,26 +7,33 @@ export class ClaudeAdapter implements CLIAdapter {
   readonly displayName = 'Claude Code';
   readonly command = 'claude';
   readonly capabilities: AdapterCapabilities = {
-    streaming: true, jsonOutput: true, sessionResume: true,
-    modes: ['auto', 'safe', 'plan'], hasEffort: true, hasModel: true, hasSearch: false, hasBudget: true,
+    streaming: true,
+    jsonOutput: true,
+    sessionResume: true,
+    modes: ['auto', 'safe', 'plan'],
+    hasEffort: true,
+    hasModel: true,
+    hasSearch: false,
+    hasBudget: true,
   };
 
-  async isAvailable(): Promise<boolean> { return commandExists(this.command); }
+  async isAvailable(): Promise<boolean> {
+    return commandExists(this.command);
+  }
 
   async execute(prompt: string, opts: ExecOptions): Promise<ExecResult> {
     const { settings } = opts;
-
     // Try Agent SDK for full interactive support (AskUserQuestion)
     try {
       return await this.executeWithSDK(prompt, opts);
     } catch (sdkErr) {
-      log.warn(`[claude] Agent SDK failed, falling back to CLI: ${(sdkErr as Error).message}`);
+      // 只在 debug 模式输出 SDK 错误，避免污染用户界面
+      log.debug(`[claude] Agent SDK 不可用，使用 CLI 模式：${(sdkErr as Error).message}`);
       return this.executeWithCLI(prompt, opts);
     }
   }
 
   // ─── Agent SDK path (supports AskUserQuestion) ────────
-
   private async executeWithSDK(prompt: string, opts: ExecOptions): Promise<ExecResult> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const { settings } = opts;
@@ -37,7 +44,6 @@ export class ClaudeAdapter implements CLIAdapter {
       maxTurns: settings.maxTurns,
       permissionMode: settings.mode === 'auto' ? 'bypassPermissions' : settings.mode === 'plan' ? 'plan' : 'default',
     };
-
     if (settings.effort) sdkOpts.effort = settings.effort;
     if (settings.model) sdkOpts.model = settings.model;
     if (settings.maxBudget > 0) sdkOpts.maxBudgetUsd = settings.maxBudget;
@@ -59,16 +65,9 @@ export class ClaudeAdapter implements CLIAdapter {
           log.debug('[claude] AskUserQuestion intercepted, forwarding to WeChat');
           try {
             const answers = await askUser({
-              questions: (input.questions as Array<{
-                question: string;
-                options: Array<{ label: string; description?: string }>;
-                multiSelect?: boolean;
-              }>) || [],
+              questions: (input.questions as Array<{ question: string; options: Array<{ label: string; description?: string }>; multiSelect?: boolean; }>) || [],
             });
-            return {
-              behavior: 'allow' as const,
-              updatedInput: { ...input, answers },
-            };
+            return { behavior: 'allow' as const, updatedInput: { ...input, answers } };
           } catch (err) {
             log.error('[claude] AskUserQuestion failed:', err);
             return { behavior: 'deny' as const, message: '用户未回复' };
@@ -91,9 +90,7 @@ export class ClaudeAdapter implements CLIAdapter {
       if (opts.signal?.aborted) {
         return { text: '已取消', error: true };
       }
-
       const msg = message as Record<string, unknown>;
-
       if (msg.type === 'result') {
         const result = msg as Record<string, unknown>;
         resultText = (result.result as string) || '(无输出)';
@@ -102,25 +99,24 @@ export class ClaudeAdapter implements CLIAdapter {
       }
     }
 
-    return {
-      text: resultText,
-      sessionId,
-      duration: Date.now() - start,
-      error,
-    };
+    return { text: resultText, sessionId, duration: Date.now() - start, error };
   }
 
   // ─── CLI fallback (no AskUserQuestion) ─────────────────
-
   private executeWithCLI(prompt: string, opts: ExecOptions): Promise<ExecResult> {
     return new Promise((resolve) => {
       const { settings } = opts;
       const args = ['-p', prompt, '--output-format', 'json'];
 
       switch (settings.mode) {
-        case 'auto': args.push('--dangerously-skip-permissions'); break;
-        case 'plan': args.push('--permission-mode', 'plan'); break;
+        case 'auto':
+          args.push('--dangerously-skip-permissions');
+          break;
+        case 'plan':
+          args.push('--permission-mode', 'plan');
+          break;
       }
+
       if (settings.effort) args.push('--effort', settings.effort);
       args.push('--max-turns', String(settings.maxTurns));
       if (settings.model) args.push('--model', settings.model);
@@ -132,37 +128,61 @@ export class ClaudeAdapter implements CLIAdapter {
       if (settings.bare) args.push('--bare');
       if (settings.addDir) args.push('--add-dir', settings.addDir);
       if (settings.sessionName) args.push('--name', settings.sessionName);
+
       const sid = settings.sessionIds[this.name];
       if (sid) args.push('--resume', sid);
       if (opts.extraArgs) args.push(...opts.extraArgs);
 
       log.debug(`[claude] effort=${settings.effort} model=${settings.model || 'default'} mode=${settings.mode}`);
+
       const proc = spawnProc(this.command, args, {
         cwd: settings.workDir || opts.workDir,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env },
+        env: { 
+          ...process.env,
+          PATH: `/home/awu/bin:${process.env.PATH || ''}`,
+        },
       });
 
       setupAbort(proc, opts.signal);
       const timer = setupTimeout(proc, opts.timeout);
+
       let stdout = '', stderr = '';
       proc.stdout!.on('data', (c: Buffer) => { stdout += c.toString(); });
       proc.stderr!.on('data', (c: Buffer) => { stderr += c.toString(); });
 
       proc.on('close', (code) => {
         if (timer) clearTimeout(timer);
-        if (opts.signal?.aborted) { resolve({ text: '已取消', error: true }); return; }
+        if (opts.signal?.aborted) {
+          resolve({ text: '已取消', error: true });
+          return;
+        }
+
         try {
           const r = JSON.parse(stdout);
           const isErr = r.is_error || r.subtype !== 'success';
           const text = r.result || '(无输出)';
-          resolve({ text, sessionId: r.session_id, duration: r.duration_ms, error: isErr, sessionExpired: isErr && !!sid && isSessionError(text) });
+          resolve({
+            text,
+            sessionId: r.session_id,
+            duration: r.duration_ms,
+            error: isErr,
+            sessionExpired: isErr && !!sid && isSessionError(text),
+          });
         } catch {
           const text = stdout.trim() || stderr.trim() || `exit ${code}`;
-          resolve({ text, error: code !== 0, sessionExpired: code !== 0 && !!sid && isSessionError(text) });
+          resolve({
+            text,
+            error: code !== 0,
+            sessionExpired: code !== 0 && !!sid && isSessionError(text),
+          });
         }
       });
-      proc.on('error', (err) => { if (timer) clearTimeout(timer); resolve({ text: `无法启动: ${err.message}`, error: true }); });
+
+      proc.on('error', (err) => {
+        if (timer) clearTimeout(timer);
+        resolve({ text: `无法启动：${err.message}`, error: true });
+      });
     });
   }
 }
