@@ -25,30 +25,26 @@ export class HermesAdapter implements CLIAdapter {
     return new Promise((resolve) => {
       const { settings } = opts;
       const args = ['chat', '-q', prompt, '-Q'];
-
       if (settings.mode === 'auto') {
         args.push('--yolo');
       }
-
       if (settings.model) {
         args.push('-m', settings.model);
       }
-
       const workDir = settings.workDir || opts.workDir;
-
       const sessionId = settings.sessionIds[this.name];
       if (sessionId) {
         args.push('--resume', sessionId);
       }
-
       if (opts.extraArgs) args.push(...opts.extraArgs);
 
       log.debug(`[hermes] executing`);
-
+      // 清除 socks 代理环境变量，因为 httpx 不支持 socks:// 协议
+      const { all_proxy, ALL_PROXY, ...cleanEnv } = process.env;
       const proc = spawnProc(this.command, args, {
         cwd: workDir,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env },
+        env: { ...cleanEnv },
       });
 
       setupAbort(proc, opts.signal);
@@ -69,14 +65,20 @@ export class HermesAdapter implements CLIAdapter {
           resolve({ text: '已取消', error: true });
           return;
         }
-
-        const text = stripAnsi(stdout.trim() || stderr.trim());
-        const sessionMatch = text.match(/session[:\s]+([a-f0-9-]{20,})/i);
-
+        let text = stripAnsi(stdout.trim() || stderr.trim());
+        // 匹配多种会话 ID 格式：UUID、时间戳格式等
+        const sessionMatch = text.match(/session[_id]*[:\s]+([a-zA-Z0-9_-]{10,})/i);
+        const sessionId = sessionMatch ? sessionMatch[1] : undefined;
+        // 清理 Hermes 的会话恢复提示和 session_id 行，只保留实际内容
+        text = text
+          .replace(/^↻ Resumed session [^\n]+\n?/gm, '')
+          .replace(/^session_id: [^\n]+\n?/gm, '')
+          .replace(/^\(?\d+ user messages?, \d+ total messages?\)?\n?/gm, '')
+          .trim();
         resolve({
           text: text || `exit ${code}`,
           error: code !== 0,
-          sessionId: sessionMatch ? sessionMatch[1] : undefined,
+          sessionId,
         });
       });
 
