@@ -251,3 +251,41 @@ src/
 ## License
 
 MIT
+
+## 📝 Hermes 修复记录 (2026-04-18)
+
+2026-04-18 修复了 Hermes Agent 的多个关键问题：
+
+### 修复内容
+
+1. **清除 socks 代理环境变量**
+   - 在启动 Hermes 进程前自动清除 `all_proxy` 和 `ALL_PROXY`
+   - 解决 Python httpx 库不支持 `socks://` 协议的问题
+
+2. **改进会话 ID 提取**
+   - 正则表达式从 `/session[:\s]+([a-f0-9-]{20,})/i` 改进为 `/session[_id]*[:\s]+([a-zA-Z0-9_-]{10,})/i`
+   - 支持时间戳格式会话 ID（如 `20260418_095626_6e6ada`）
+
+3. **清理调试信息输出**
+   - 自动过滤 `↻ Resumed session`、`session_id:` 等调试信息
+   - 微信消息更简洁，只保留实际对话内容
+
+### 修复效果
+
+| 问题 | 修复前 | 修复后 |
+|------|--------|--------|
+| 会话恢复 | ❌ Session not found | ✅ 正常恢复 |
+| 代理配置 | ❌ socks 不支持 | ✅ 自动清除 |
+| 会话连续性 | ❌ 每次新会话 | ✅ 正确恢复 |
+| 输出格式 | ❌ 调试信息 | ✅ 干净整洁 |
+
+### 相关提交
+
+- Commit: `a95f930` - fix: 修复 Hermes 会话 ID 提取和 socks 代理问题
+- Commit: `0855169` - docs: 添加问题修复报告 (REPORT.md)
+
+**详细报告**: [REPORT.md](REPORT.md)
+
+## License
+
+MIT
